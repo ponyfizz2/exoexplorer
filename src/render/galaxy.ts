@@ -20,6 +20,9 @@ import { buildGalacticPlane, buildGalacticCore, buildDistanceRings } from "./str
 import { createComposer, shouldUseBloom, type ComposerHandle } from "./composer";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+/** Pointer travel, in pixels, still counted as a click rather than a drag. */
+const CLICK_SLOP_PX = 5;
+
 export type ColorMode = "class" | "temperature" | "method" | "year" | "habitability";
 export type SizeMode = "radius" | "mass" | "year" | "distance" | "uniform";
 
@@ -128,6 +131,8 @@ export class GalaxyView {
   private pickables: Pickable[] = [];
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2(-10, -10);
+  /** Where the current press began, so a drag can be told from a click. */
+  private pressOrigin: { x: number; y: number } | null = null;
 
   private sun!: THREE.Group;
   private highlight!: THREE.Mesh;
@@ -200,9 +205,10 @@ export class GalaxyView {
       settle.observe(container);
     }
 
+    this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
+    this.renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
     this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
     this.renderer.domElement.addEventListener("pointerleave", this.handlePointerLeave);
-    this.renderer.domElement.addEventListener("click", this.handleClick);
     window.addEventListener("resize", this.handleResize);
 
     this.animate = this.animate.bind(this);
@@ -587,7 +593,23 @@ export class GalaxyView {
     this.onHover?.(null, null as unknown as PointerEvent);
   };
 
-  private handleClick = (): void => {
+  /**
+   * A click only opens a dossier if the pointer barely moved.
+   *
+   * OrbitControls uses the same button for rotation, so a drag that happens to
+   * start on a world was firing a selection on release. Anything beyond a few
+   * pixels of travel is a camera gesture, not a choice.
+   */
+  private handlePointerDown = (event: PointerEvent): void => {
+    this.pressOrigin = { x: event.clientX, y: event.clientY };
+  };
+
+  private handlePointerUp = (event: PointerEvent): void => {
+    const origin = this.pressOrigin;
+    this.pressOrigin = null;
+    if (!origin) return;
+    const travel = Math.hypot(event.clientX - origin.x, event.clientY - origin.y);
+    if (travel > CLICK_SLOP_PX) return;
     if (this.hoveredIndex >= 0) this.onSelect?.(this.planets[this.hoveredIndex]);
   };
 
@@ -664,9 +686,10 @@ export class GalaxyView {
     cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     window.removeEventListener("resize", this.handleResize);
+    this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
+    this.renderer.domElement.removeEventListener("pointerup", this.handlePointerUp);
     this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
     this.renderer.domElement.removeEventListener("pointerleave", this.handlePointerLeave);
-    this.renderer.domElement.removeEventListener("click", this.handleClick);
     this.controls?.dispose();
     this.post?.dispose();
     this.scene.traverse((object) => {

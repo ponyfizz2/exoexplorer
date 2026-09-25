@@ -16,6 +16,8 @@ A complete rebuild of an earlier single-file prototype, with the science, the re
 | **Habitable Worlds** | The Goldilocks List — a ranked shortlist with a fully explained score. |
 | **Archive** | The sortable raw table with per-row derived values, exportable to CSV. |
 
+**Click versus drag.** The 3D map shares its mouse button with the orbit controls, so a selection only fires when the pointer travels 5 px or less between press and release. Dragging to rotate the camera never opens a dossier.
+
 Click any world for a **dossier**: a to-scale 3D system view with the real habitable zone drawn as geometry, a physical profile, an Earth-similarity breakdown, a size comparison, and honest interstellar travel times.
 
 ---
@@ -111,7 +113,8 @@ The repo is Vercel-ready. Import it, or:
 
 Every individual point on the Galaxy Map is a **confirmed planet**. Nothing else is dot-shaped:
 
-- The **Milky Way** is a single translucent grey disc lying on the true galactic equator, bright toward the galactic centre and fading to nothing at the rim. It carries no texture and no dots — an earlier revision scattered ~11,600 decorative star sprites across the map, which competed directly with the real data and made the picture unreadable.
+- The **Milky Way** is a single translucent grey disc lying on the true galactic equator: four logarithmic spiral arms (two dominant, two weaker spurs) with dust lanes, a faint bulge at the centre, fading to nothing at the rim. Drawn as continuous soft strokes, never dots — an earlier revision scattered ~11,600 decorative star sprites across the map, which competed directly with the real data and made the picture unreadable.
+- **Brightness is calibrated, not eyeballed.** The plane's opacity is set so the open-sky background sits at 12.9/255 against a 9.2 baseline, while the exoplanet points hold at 75.6/255 — so not one of 6,372 worlds is dulled by the scenery behind it. An earlier attempt at 0.42 opacity tripled the background and the data stopped reading.
 - **Distance rings** at 10 / 25 / 50 / 100 / 200 / 400 pc are faint hairlines with labels.
 - The **Sun** is the origin, marked "Sol". It is the coordinate system, not a data point.
 - The **24 nearest real stars** (within 16 pc) are the one exception, and they are catalogued objects rather than decoration.
