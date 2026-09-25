@@ -82,6 +82,21 @@ async function fetchUpstream(columns) {
   throw lastError;
 }
 
+/** Builds the response payload, including a timestamp for cache diagnostics. */
+async function buildPayload(columns) {
+  const rows = await fetchUpstream(columns);
+  return {
+    planets: normalise(rows),
+    meta: {
+      source: "NASA Exoplanet Archive — Planetary Systems (ps), default_flag=1",
+      endpoint: TAP,
+      count: rows.length,
+      columns,
+      fetchedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalise(rows) {
   return rows.map((row) => {
     const out = {};
@@ -95,8 +110,20 @@ function normalise(rows) {
   });
 }
 
-/** Warm-lambda cache so repeat visits never touch NASA. */
+/**
+ * In-memory cache on the warm lambda.
+ *
+ * Vercel's build step rewrites Cache-Control on function responses, so the
+ * s-maxage directive below is advisory at best and the CDN will not do the
+ * caching for us. Owning it here means a warm instance answers from memory
+ * instantly, and a stale entry is served immediately while a background
+ * refresh runs — the same behaviour stale-while-revalidate would have given us.
+ */
+const FRESH_MS = 6 * 60 * 60 * 1000;   // serve without question
+const STALE_MS = 48 * 60 * 60 * 1000;  // serve, but refresh in the background
+
 let cache = null;
+let inFlight = null;
 
 export default async function handler(req, res) {
   const requested = String(req.query?.cols ?? "")
@@ -109,29 +136,41 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
-  if (cache && cache.key === effective.join(",")) {
+  const key = effective.join(",");
+  const age = cache && cache.key === key ? Date.now() - cache.storedAt : Infinity;
+
+  if (cache && cache.key === key && age < FRESH_MS) {
     res.setHeader("X-Exo-Cache", "HIT");
-    res.setHeader("Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
+    res.setHeader("X-Exo-Age", String(Math.round(age / 1000)));
+    res.setHeader("Cache-Control", "public, max-age=3600");
     return res.status(200).json({ ...cache.payload, meta: { ...cache.payload.meta, cache: "hit" } });
   }
 
+  // Stale but usable: answer now, refresh behind the scenes.
+  if (cache && cache.key === key && age < STALE_MS) {
+    if (!inFlight) {
+      inFlight = buildPayload(effective)
+        .then((payload) => { cache = { key, payload, storedAt: Date.now() }; })
+        .catch(() => undefined)
+        .finally(() => { inFlight = null; });
+    }
+    res.setHeader("X-Exo-Cache", "STALE");
+    res.setHeader("X-Exo-Age", String(Math.round(age / 1000)));
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return res.status(200).json({ ...cache.payload, meta: { ...cache.payload.meta, cache: "stale" } });
+  }
+
+  // Cold. Collapse concurrent misses onto a single upstream request so a burst
+  // of traffic cannot stampede the archive.
   try {
-    const rows = await fetchUpstream(effective);
-    const payload = {
-      planets: normalise(rows),
-      meta: {
-        source: "NASA Exoplanet Archive — Planetary Systems (ps), default_flag=1",
-        endpoint: TAP,
-        count: rows.length,
-        columns: effective,
-        fetchedAt: new Date().toISOString(),
-        cache: "miss",
-      },
-    };
-    cache = { key: effective.join(","), payload };
-    // 6h at the edge: the archive changes a few times a day at most.
+    if (!inFlight) {
+      inFlight = buildPayload(effective).finally(() => { inFlight = null; });
+    }
+    const payload = await inFlight;
+    cache = { key, payload, storedAt: Date.now() };
     res.setHeader("X-Exo-Cache", "MISS");
-    res.setHeader("Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
+    res.setHeader("X-Exo-Age", "0");
+    res.setHeader("Cache-Control", "public, max-age=3600");
     return res.status(200).json(payload);
   } catch (error) {
     res.setHeader("Cache-Control", "no-store");
