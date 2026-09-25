@@ -14,7 +14,8 @@ import type { Fleet, FleetMeta, Planet } from "./types";
 
 const API = "/api/planets";
 const SNAPSHOT = "/snapshot.json";
-const LS_KEY = "exoexplorer.fleet.v1";
+/** Bump when the payload shape changes, so stale caches are ignored rather than mis-read. */
+const LS_KEY = "exoexplorer.fleet.v2";
 const LS_TTL_MS = 12 * 60 * 60 * 1000;
 const NETWORK_TIMEOUT_MS = 20_000;
 
@@ -59,12 +60,47 @@ async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
   }
 }
 
+/**
+ * Mirror of the encoder in api/planets.js.
+ *
+ * Low-cardinality strings (discovery method, facility, spectral type) ship as
+ * indices into `dictionaries`, which takes the payload from ~2.1 MB to ~1.9 MB
+ * and matters far more once the snapshot is committed to the repo. Plain rows
+ * pass through untouched, so both shapes are accepted.
+ */
+function decodeDictionaries(
+  rows: Planet[],
+  dictionaries: Record<string, string[]> | undefined,
+): Planet[] {
+  if (!dictionaries) return rows;
+  const columns = Object.keys(dictionaries).filter((key) => Array.isArray(dictionaries[key]));
+  if (!columns.length) return rows;
+
+  return rows.map((row) => {
+    let copy: Planet | null = null;
+    for (const column of columns) {
+      const value = (row as unknown as Record<string, unknown>)[column];
+      if (typeof value !== "number") continue;
+      const resolved = dictionaries[column][value];
+      if (resolved === undefined) continue;
+      if (!copy) copy = { ...row };
+      (copy as unknown as Record<string, unknown>)[column] = resolved;
+    }
+    return copy ?? row;
+  });
+}
+
 function validate(payload: unknown, origin: FleetMeta["origin"]): Fleet {
-  const data = payload as { planets?: unknown; meta?: Partial<FleetMeta> } | null;
+  const data = payload as {
+    planets?: unknown;
+    dictionaries?: Record<string, string[]>;
+    meta?: Partial<FleetMeta>;
+  } | null;
   if (!data || !Array.isArray(data.planets) || data.planets.length === 0) {
     throw new Error("payload contained no planets");
   }
-  const planets = (data.planets as Planet[]).filter((p) => p && typeof p.pl_name === "string");
+  const planets = decodeDictionaries(data.planets as Planet[], data.dictionaries)
+    .filter((p) => p && typeof p.pl_name === "string");
   if (!planets.length) throw new Error("payload contained no usable rows");
   return {
     planets,

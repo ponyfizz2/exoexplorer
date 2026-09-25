@@ -58,14 +58,50 @@ const planets = rows.map((row) => {
   return out;
 });
 
+/**
+ * Dictionary-encode low-cardinality strings, mirroring api/planets.js. The
+ * snapshot is committed to the repo and served to every visitor who arrives
+ * while the archive is down, so its size is worth the small amount of fiddling.
+ */
+const ENCODE_COLUMNS = ["discoverymethod", "disc_facility", "st_spectype"];
+const dictionaries = {};
+const index = {};
+for (const column of ENCODE_COLUMNS) {
+  dictionaries[column] = [];
+  index[column] = new Map();
+}
+
+const encoded = planets.map((row) => {
+  const out = {};
+  for (const key of Object.keys(row)) {
+    const value = row[key];
+    if (index[key]) {
+      const map = index[key];
+      if (!map.has(value)) {
+        map.set(value, dictionaries[key].length);
+        dictionaries[key].push(value);
+      }
+      out[key] = map.get(value);
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+});
+for (const column of ENCODE_COLUMNS) {
+  if (!dictionaries[column].length) delete dictionaries[column];
+}
+
 const payload = {
   meta: {
     source: "NASA Exoplanet Archive — Planetary Systems (ps), default_flag=1",
     endpoint: "https://exoplanetarchive.ipac.caltech.edu/TAP/sync",
-    count: planets.length,
+    count: encoded.length,
+    encoded: Object.keys(dictionaries),
     fetchedAt: new Date().toISOString(),
   },
-  planets,
+  dictionaries,
+  planets: encoded,
 };
 
 await mkdir(dirname(OUT), { recursive: true });
