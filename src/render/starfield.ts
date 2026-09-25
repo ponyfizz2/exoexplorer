@@ -68,7 +68,7 @@ export class Starfield {
     const area = this.width * this.height;
     this.stars = [];
     for (const layer of LAYERS) {
-      const count = Math.min(1400, Math.round(area * layer.count));
+      const count = Math.min(1100, Math.round(area * layer.count));
       for (let i = 0; i < count; i += 1) {
         this.stars.push({
           x: Math.random() * this.width,
@@ -89,7 +89,9 @@ export class Starfield {
         y: Math.random() * this.height,
         r: Math.max(this.width, this.height) * (0.18 + Math.random() * 0.35),
         hue: [265, 190, 220, 300][Math.floor(Math.random() * 4)],
-        alpha: 0.05 + Math.random() * 0.07,
+        // Kept very low: the Milky Way band now provides the background
+        // structure in the 3D view, and a competing wash muddies both.
+        alpha: 0.028 + Math.random() * 0.035,
       });
     }
   }

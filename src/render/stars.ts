@@ -1,7 +1,10 @@
 /**
- * A physically-motivated 3D starfield for the WebGL scenes, plus the Milky Way
- * band. Distances are log-scaled: the nearest star is ~1.3 pc and the far wall of
- * the galaxy is ~30 kpc, so a linear mapping would collapse everything to a dot.
+ * The sky, and the handful of real stars near the Sun.
+ *
+ * Deliberately NOT a point cloud. Thousands of decorative star sprites competed
+ * with the 6,366 real exoplanets for attention and made the map unreadable: a
+ * grey surface reads as "not data" instantly, whereas grey dots read as more
+ * data. The Milky Way band is drawn instead (see structure.ts).
  */
 
 import * as THREE from "three";
@@ -10,9 +13,9 @@ import { starColorFor } from "./planetTextures";
 export interface NearbyStar { name: string; x: number; y: number; z: number; teff: number; mag: number }
 
 /**
- * Twenty-five real stars within 15 parsecs, with approximate galactic
- * coordinates (x toward the galactic centre, y along the disk, z out of plane).
- * These anchor the map in something recognisable.
+ * Twenty-four real stars within 16 parsecs, with heliocentric galactic
+ * coordinates. These earn their place: they are the only individually-placed
+ * objects on the map besides the Sun and the exoplanets themselves.
  */
 export const NEARBY_STARS: NearbyStar[] = [
   { name: "Proxima Centauri", x: -1.30, y: -0.05, z: -0.07, teff: 3042, mag: 11.13 },
@@ -39,126 +42,94 @@ export const NEARBY_STARS: NearbyStar[] = [
   { name: "YZ Ceti", x: -6.20, y: 14.60, z: -0.40, teff: 3056, mag: 12.1 },
   { name: "Luyten's Star", x: -6.50, y: 15.20, z: 2.10, teff: 3150, mag: 9.87 },
   { name: "Teegarden's Star", x: -6.80, y: 15.80, z: 0.60, teff: 2904, mag: 15.1 },
-  { name: "Kapteyn's Star", x: -7.10, y: 16.40, z: -6.20, teff: 3570, mag: 8.86 },
 ];
 
-/** Builds the background star sphere plus a Milky Way band. */
-export function buildGalacticBackdrop(): THREE.Group {
+/**
+ * The named local stars as faint markers. Fixed scene scale: these are the only
+ * objects on the map drawn at true relative distance rather than a compressed one.
+ */
+export function buildNearbyStars(): THREE.Group {
   const group = new THREE.Group();
-  group.name = "galactic-backdrop";
-
-  // --- Star sphere --------------------------------------------------------
-  const count = 9000;
-  const positions = new Float32Array(count * 3);
-  const colors = new Float32Array(count * 3);
-  const sizes = new Float32Array(count);
-  const color = new THREE.Color();
-
-  for (let i = 0; i < count; i += 1) {
-    // Cluster half the stars toward the galactic plane for a believable sky.
-    const inPlane = i % 2 === 0;
-    const u = Math.random() * 2 - 1;
-    const theta = Math.random() * Math.PI * 2;
-    const phi = inPlane ? (Math.random() - 0.5) * 0.55 : Math.acos(u);
-    // Far enough out that the camera can never fly past it, and scaled so the
-    // points stay visible at the default orbit distance.
-    const r = 1120 + Math.random() * 380;
-    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-    positions[i * 3 + 1] = r * Math.cos(phi) * (inPlane ? 0.35 : 1);
-    positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-
-    const teff = 2600 + Math.pow(Math.random(), 1.8) * 22000;
-    color.set(starColorFor(teff));
-    colors[i * 3] = color.r; colors[i * 3 + 1] = color.g; colors[i * 3 + 2] = color.b;
-    sizes[i] = 0.9 + Math.pow(Math.random(), 3) * 3.4;
-  }
+  group.name = "nearby-stars";
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-
-  const material = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    vertexShader: `
-      attribute float size;
-      varying vec3 vColor;
-      void main() {
-        vColor = color;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = clamp(size * (760.0 / -mv.z), 1.0, 7.0);
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: `
-      varying vec3 vColor;
-      void main() {
-        vec2 d = gl_PointCoord - vec2(0.5);
-        float dist = length(d);
-        if (dist > 0.5) discard;
-        float glow = pow(1.0 - dist * 2.0, 2.4);
-        gl_FragColor = vec4(vColor, glow);
-      }
-    `,
-    vertexColors: true,
-  });
-
-  const stars = new THREE.Points(geometry, material);
-  stars.name = "star-sphere";
-  group.add(stars);
-
-  // --- Milky Way band -----------------------------------------------------
-  const bandCount = 2600;
-  const bandPos = new Float32Array(bandCount * 3);
-  const bandCol = new Float32Array(bandCount * 3);
-  for (let i = 0; i < bandCount; i += 1) {
-    const theta = Math.random() * Math.PI * 2;
-    const spread = (Math.random() - 0.5) * 92 * Math.pow(Math.random(), 0.6);
-    const r = 1040 + Math.random() * 200;
-    bandPos[i * 3] = Math.cos(theta) * r;
-    bandPos[i * 3 + 1] = spread;
-    bandPos[i * 3 + 2] = Math.sin(theta) * r;
-    const warm = Math.random();
-    bandCol[i * 3] = 0.9 + warm * 0.1;
-    bandCol[i * 3 + 1] = 0.85 + warm * 0.1;
-    bandCol[i * 3 + 2] = 0.95;
-  }
-  const bandGeo = new THREE.BufferGeometry();
-  bandGeo.setAttribute("position", new THREE.BufferAttribute(bandPos, 3));
-  bandGeo.setAttribute("color", new THREE.BufferAttribute(bandCol, 3));
-  const bandMat = new THREE.PointsMaterial({
-    size: 6.4, sizeAttenuation: true, transparent: true, opacity: 0.32,
-    depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
-  });
-  const band = new THREE.Points(bandGeo, bandMat);
-  band.name = "milky-way";
-  group.add(band);
-
-  // --- Nearby, named stars ------------------------------------------------
-  const nearbyGeo = new THREE.BufferGeometry();
-  const nearbyPos = new Float32Array(NEARBY_STARS.length * 3);
-  const nearbyCol = new Float32Array(NEARBY_STARS.length * 3);
+  const positions = new Float32Array(NEARBY_STARS.length * 3);
+  const colours = new Float32Array(NEARBY_STARS.length * 3);
   NEARBY_STARS.forEach((star, i) => {
-    // Local bubble coordinates are in parsecs; the map uses 1 unit = 1 parsec.
-    nearbyPos[i * 3] = star.x;
-    nearbyPos[i * 3 + 1] = star.z;
-    nearbyPos[i * 3 + 2] = star.y;
+    // Heliocentric galactic frame: +x toward the galactic centre, +z out of plane.
+    positions[i * 3] = star.x * 0.185;
+    positions[i * 3 + 1] = star.z * 0.185;
+    positions[i * 3 + 2] = star.y * 0.185;
     const c = new THREE.Color(starColorFor(star.teff));
-    const brightness = Math.max(0.25, 1.15 - star.mag / 16);
-    nearbyCol[i * 3] = c.r * brightness;
-    nearbyCol[i * 3 + 1] = c.g * brightness;
-    nearbyCol[i * 3 + 2] = c.b * brightness;
+    const brightness = Math.max(0.35, 1.1 - star.mag / 16);
+    colours[i * 3] = c.r * brightness;
+    colours[i * 3 + 1] = c.g * brightness;
+    colours[i * 3 + 2] = c.b * brightness;
   });
-  nearbyGeo.setAttribute("position", new THREE.BufferAttribute(nearbyPos, 3));
-  nearbyGeo.setAttribute("color", new THREE.BufferAttribute(nearbyCol, 3));
-  const nearby = new THREE.Points(nearbyGeo, new THREE.PointsMaterial({
-    size: 0.7, sizeAttenuation: true, transparent: true, opacity: 0.95,
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+
+  const points = new THREE.Points(geometry, new THREE.PointsMaterial({
+    size: 0.5, sizeAttenuation: true, transparent: true, opacity: 0.7,
     depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
   }));
-  nearby.name = "nearby-stars";
-  group.add(nearby);
+  group.add(points);
+
+  // The Sun itself: the map's origin, and the one star every reader knows.
+  const sol = new THREE.Group();
+  sol.name = "sol";
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.34, 20, 20),
+    new THREE.MeshBasicMaterial({ color: 0xfff6d5 }),
+  );
+  sol.add(core);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: radialTexture("rgba(255,244,210,0.95)"),
+    transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  halo.scale.setScalar(4.6);
+  sol.add(halo);
+  group.add(sol);
 
   return group;
+}
+
+/** Soft radial sprite texture, used for the Sun's halo. */
+export function radialTexture(inner: string): THREE.Texture {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, inner);
+  g.addColorStop(0.3, "rgba(255,232,180,0.42)");
+  g.addColorStop(1, "rgba(255,210,140,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/**
+ * A text label that always faces the camera, drawn on a canvas. Used for the
+ * "Sol" marker and the distance-ring ticks.
+ */
+export function makeLabel(text: string, colour = "rgba(226,232,240,0.92)", scale = 1): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = colour;
+  ctx.font = "600 30px ui-monospace, Menlo, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 128, 34);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false,
+  }));
+  sprite.scale.set(7.2 * scale, 1.8 * scale, 1);
+  return sprite;
 }

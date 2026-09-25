@@ -107,9 +107,31 @@ The repo is Vercel-ready. Import it, or:
     src/ui/detail.ts            The planet dossier
     src/main.ts                 Application controller
 
-### A note on the schematic galaxy
+### The map's design rule: non-data is never a dot
 
-The spiral backdrop in the map is **not data**. The archive provides position, not an image, so the Milky Way is drawn from a standard four-arm logarithmic model purely as a navigation aid, at low opacity. Real confirmed planets are drawn on top at full brightness.
+Every individual point on the Galaxy Map is a **confirmed planet**. Nothing else is dot-shaped:
+
+- The **Milky Way** is a single translucent grey disc lying on the true galactic equator, bright toward the galactic centre and fading to nothing at the rim. It carries no texture and no dots — an earlier revision scattered ~11,600 decorative star sprites across the map, which competed directly with the real data and made the picture unreadable.
+- **Distance rings** at 10 / 25 / 50 / 100 / 200 / 400 pc are faint hairlines with labels.
+- The **Sun** is the origin, marked "Sol". It is the coordinate system, not a data point.
+- The **24 nearest real stars** (within 16 pc) are the one exception, and they are catalogued objects rather than decoration.
+
+The grey disc is **not measured data** — the archive provides position, not an image. It is drawn on the physically meaningful plane so you can see for yourself which worlds sit in the disk.
+
+### Why the exoplanets are not all in the galactic plane
+
+They should not be, and the map shows the real reason. Measured across all 6,366 planets:
+
+| | |
+| --- | --- |
+| Median height above the plane | 196 pc |
+| Within ±300 pc (the thin disk's scale height) | 58.3% |
+| Galactic latitude of the **Kepler** field (2,755 planets) | +44.2° |
+| Galactic latitude of **everything else** (3,611 planets) | −6.1° |
+
+The Milky Way's thin disk has a scale height of about 300 pc, which from the Sun's vantage 8.15 kpc out subtends only ~2.1° of latitude. The survey volume is roughly 700 pc across but the disk is only ~600 pc thick, so a local census is inherently a thick wedge — not a thin sheet.
+
+The dominant reason the cloud looks lopsided is **Kepler**: 43% of all confirmed planets sit in one patch of sky at +44° latitude, because Kepler stared at a single star field chosen for low dust extinction. Everything else clusters near the plane at −6°. That off-plane plume is observational bias made visible, and the app says so in the sidebar.
 
 ---
 

@@ -401,8 +401,21 @@ function renderGalaxySidebar(): void {
   const visibleCount = s.filtered.filter((d) => d.planet.disc_year <= activeYear).length;
 
   const portal = galaxy?.portalValue ?? "local";
+  const centredOnData = galaxy?.centredOnDataValue ?? false;
 
   sidebar.innerHTML = `
+    <div class="side-section">
+      <h3><i class="h3-mark"></i> Orbit around</h3>
+      <div class="seg" style="width:100%" id="centre-mode">
+        <button type="button" data-centre="sun" aria-pressed="${!centredOnData}" style="flex:1">The Sun</button>
+        <button type="button" data-centre="data" aria-pressed="${centredOnData}" style="flex:1">Data centre</button>
+      </div>
+      <p style="margin:7px 0 0;font-size:10px;line-height:1.5;color:var(--text-faint)">
+        The map is heliocentric, so Sol is the origin. The cloud looks lopsided because
+        Kepler stared at one patch of sky at galactic latitude +44°.
+      </p>
+    </div>
+
     <div class="side-section">
       <h3><i class="h3-mark"></i> View scale</h3>
       <div class="seg" style="width:100%" id="portal-mode">
@@ -492,6 +505,13 @@ function renderGalaxySidebar(): void {
     applyFilters();
     const again = document.getElementById("galaxy-search") as HTMLInputElement | null;
     if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  });
+
+  sidebar.querySelectorAll<HTMLButtonElement>("#centre-mode button").forEach((button) => {
+    button.addEventListener("click", () => {
+      galaxy?.setCentredOnData(button.dataset.centre === "data");
+      renderGalaxySidebar();
+    });
   });
 
   sidebar.querySelectorAll<HTMLButtonElement>("#portal-mode button").forEach((button) => {
@@ -633,6 +653,8 @@ function renderGalaxyHud(): void {
       <div style="color:var(--text-faint);margin-top:4px">${(galaxy?.portalValue ?? "local") === "local"
         ? "Linear scale · 400 pc horizon"
         : "Log scale · 1 pc → 12 kpc"}</div>
+      <div style="color:var(--text-faint)">Centred on ${(galaxy?.centredOnDataValue ?? false) ? "the data" : "Sol (origin)"}</div>
+      <div style="color:var(--text-faint);margin-top:4px;opacity:.75">Grey haze = Milky Way, not data</div>
     </div>`;
 }
 

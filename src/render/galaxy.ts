@@ -15,9 +15,8 @@ import * as THREE from "three";
 import type { DerivedPlanet, PlanetClass } from "../lib/types";
 import { CLASS_COLORS } from "../lib/astronomy";
 import { clamp, temperatureColor } from "../lib/utils";
-import { buildGalacticBackdrop, NEARBY_STARS } from "./stars";
-import { buildGalacticStructure, buildDistanceRings } from "./structure";
-import { starColorFor } from "./planetTextures";
+import { buildNearbyStars, makeLabel } from "./stars";
+import { buildGalacticPlane, buildGalacticCore, buildDistanceRings } from "./structure";
 import { createComposer, shouldUseBloom, type ComposerHandle } from "./composer";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -139,6 +138,9 @@ export class GalaxyView {
   private colorMode: ColorMode = "class";
   private sizeMode: SizeMode = "radius";
   private portal: Portal = "local";
+  /** When true the camera orbits the centre of the data instead of the Sun. */
+  private centredOnData = false;
+  private dataCentroid = new THREE.Vector3();
   private yearFilter = 2026;
   private selectedIndex = -1;
   private hoveredIndex = -1;
@@ -162,10 +164,11 @@ export class GalaxyView {
     // A 55 degree field of view framing the whole local bubble puts thousands of
     // real worlds on screen at once, which is the point of the view.
     this.camera = new THREE.PerspectiveCamera(55, (container.clientWidth || 1) / (container.clientHeight || 1), 0.05, 3000);
-    this.camera.position.set(0, 88, 26);
+    // Tilted well off the plane: shallow enough that the Milly Way band reads as
+    // a band, steep enough to see the vertical spread of the survey.
+    this.camera.position.set(0, 62, 68);
     this.controlsTargetHint = new THREE.Vector3(0, 0, 0);
 
-    this.scene.add(buildGalacticBackdrop());
     this.buildStructure();
     this.buildSun();
     this.buildHighlight();
@@ -181,6 +184,7 @@ export class GalaxyView {
       this.controls.maxDistance = 420;
       this.controls.autoRotate = false;
       this.controls.enablePan = true;
+      if (this.centredOnData) this.applyDataCentredFraming();
     });
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
@@ -207,9 +211,15 @@ export class GalaxyView {
 
   // --- Scene construction ---------------------------------------------------
 
-  /** Schematic galaxy plus distance rings — context, never presented as data. */
+  /**
+   * Scenery: the Milky Way as a smooth shaded band, the galactic centre as one
+   * glow, and the real stars within 16 pc. Not one decorative dot — every dot on
+   * this map is a confirmed planet. See structure.ts for the reasoning.
+   */
   private buildStructure(): void {
-    this.structure = buildGalacticStructure();
+    this.scene.add(buildGalacticPlane());
+    this.scene.add(buildGalacticCore());
+    this.structure = buildNearbyStars();
     this.scene.add(this.structure);
     this.rebuildRings();
   }
@@ -232,42 +242,16 @@ export class GalaxyView {
     this.scene.add(this.rings);
   }
 
+  /** The Sun sits at the origin — it is the coordinate system, not a data point. */
   private buildSun(): void {
     const group = new THREE.Group();
     group.name = "sun";
-
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.32, 20, 20),
-      new THREE.MeshBasicMaterial({ color: 0xfff6d5 }),
-    );
-    group.add(core);
-
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: makeGlowTexture("#ffe9a8"),
-      color: 0xffffff, transparent: true, opacity: 0.95,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    glow.scale.setScalar(5.2);
-    group.add(glow);
-
-    // The 25 nearest real stars, so the local bubble is recognisable.
-    group.add(this.buildNeighbourLabels());
+    const label = makeLabel("Sol", "rgba(255,246,213,0.95)", 1.05);
+    label.position.set(0, 1.5, 0);
+    label.name = "sol-label";
+    group.add(label);
     this.sun = group;
     this.scene.add(group);
-  }
-
-  private buildNeighbourLabels(): THREE.Group {
-    const neighbours = new THREE.Group();
-    neighbours.name = "neighbours";
-    for (const star of NEARBY_STARS_CACHE) {
-      const point = new THREE.Mesh(
-        new THREE.SphereGeometry(0.09, 8, 8),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(star.color) }),
-      );
-      point.position.copy(star.position);
-      neighbours.add(point);
-    }
-    return neighbours;
   }
 
   private buildHighlight(): void {
@@ -384,8 +368,23 @@ export class GalaxyView {
     this.points.name = "exoplanets";
     this.scene.add(this.points);
 
+    this.dataCentroid = this.centroidOf(this.positions);
     this.applyColors();
     this.applySizes();
+    if (this.centredOnData) this.applyDataCentredFraming();
+  }
+
+  /** Mean position of the visible data — used only for the "centre on data" frame. */
+  private centroidOf(positions: Float32Array): THREE.Vector3 {
+    const out = new THREE.Vector3();
+    const count = positions.length / 3;
+    if (!count) return out;
+    for (let i = 0; i < count; i += 1) {
+      out.x += positions[i * 3];
+      out.y += positions[i * 3 + 1];
+      out.z += positions[i * 3 + 2];
+    }
+    return out.multiplyScalar(1 / count);
   }
 
   private sizeFor(p: DerivedPlanet, extents: Record<string, [number, number]>): number {
@@ -433,6 +432,34 @@ export class GalaxyView {
   }
 
   get portalValue(): Portal { return this.portal; }
+  get centredOnDataValue(): boolean { return this.centredOnData; }
+
+  /**
+   * Re-centre the orbit target.
+   *
+   * "sun" keeps the origin centred, which is the truthful frame: the map is
+   * heliocentric, and the Sun is at (0,0,0) by construction. The dot cloud still
+   * looks lopsided because Kepler stared at one patch of sky at galactic
+   * latitude +44 degrees — that asymmetry is the finding, not a rendering bug.
+   * "data" exists for readers who would rather see the cloud than the origin.
+   */
+  setCentredOnData(centred: boolean): void {
+    this.centredOnData = centred;
+    if (!this.controls) return;
+    const target = centred ? this.dataCentroid : new THREE.Vector3(0, 0, 0);
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    if (offset.lengthSq() < 1e-6) offset.set(0, 0.6, 1);
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).add(offset);
+    this.controls.update();
+  }
+
+  private applyDataCentredFraming(): void {
+    if (!this.controls) return;
+    const target = this.centredOnData ? this.dataCentroid : new THREE.Vector3(0, 0, 0);
+    this.controls.target.copy(target);
+    this.controls.update();
+  }
 
   setSizeMode(mode: SizeMode): void {
     this.sizeMode = mode;
@@ -811,27 +838,6 @@ function extent(values: (number | null)[]): [number, number] {
   return [lo, hi];
 }
 
-function makeGlowTexture(color: string): THREE.Texture {
-  const size = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = size; canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, color);
-  g.addColorStop(0.25, color.replace(")", ",0.55)").replace("rgb", "rgba"));
-  g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
 
-/** Cached positions for the named nearby stars, reused by the label layer. */
-const NEARBY_STARS_CACHE = NEARBY_STARS.map((star) => ({
-  ...star,
-  color: starColorFor(star.teff),
-  position: new THREE.Vector3(star.x * 0.185, star.z * 0.185, star.y * 0.185),
-}));
 
-export { NEARBY_STARS_CACHE };
+
