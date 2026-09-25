@@ -163,15 +163,40 @@ export function semiMajorAxis(planet: Planet, starMass = 1): { value: number | n
   return { value: null, inferred: true };
 }
 
+/** Earth's insolation, in the same units the archive reports pl_insol in. */
+const EARTH_INSOLATION = 1;
+
 /**
- * Equilibrium temperature. The archive value is preferred; otherwise
- * T_eq = T_star * sqrt(R_star / 2a) for a zero-albedo, full-redistribution body.
+ * Equilibrium temperature, in order of trustworthiness.
+ *
+ *  1. The catalogued `pl_eqt`.
+ *  2. Derived from insolation, which already folds in the star's luminosity:
+ *     T_eq = 255 K * S^0.25. This is the preferred fallback precisely because it
+ *     does not re-derive luminosity from Teff and radius, where a small error is
+ *     amplified by the fourth power.
+ *  3. Last resort, the zero-albedo Stefan-Boltzmann form T_star * sqrt(R/2a).
+ *
+ * The naive form is genuinely misleading for a world like TRAPPIST-1 e: with an
+ * archive insolation of 0.646 S_earth the answer is ~251 K, but the bare formula
+ * returns ~3,700 K, which would rank a temperate planet as molten.
  */
 export function equilibriumTemp(planet: Planet, a: number | null): number | null {
   if (Number.isFinite(planet.pl_eqt) && (planet.pl_eqt as number) > 0) return planet.pl_eqt as number;
+
+  if (Number.isFinite(planet.pl_insol) && (planet.pl_insol as number) > 0) {
+    return 254.6 * Math.pow((planet.pl_insol as number) / EARTH_INSOLATION, 0.25);
+  }
+
   if (Number.isFinite(planet.st_teff) && Number.isFinite(planet.st_rad) && a && a > 0) {
     return (planet.st_teff as number) * Math.sqrt((planet.st_rad as number) / (2 * a));
   }
+  return null;
+}
+
+/** Insolation in Earth fluxes, derived from the semi-major axis when absent. */
+export function insolation(planet: Planet, luminosity: number, a: number | null): number | null {
+  if (Number.isFinite(planet.pl_insol) && (planet.pl_insol as number) > 0) return planet.pl_insol as number;
+  if (a && a > 0 && luminosity > 0) return luminosity / (a * a);
   return null;
 }
 
@@ -257,11 +282,11 @@ const EARTH_REFERENCE = { radius: 1, density: EARTH_DENSITY, escape: EARTH_ESCAP
 // --- Composite habitability -------------------------------------------------
 
 export const HABITABILITY_WEIGHTS = {
-  earthSimilarity: 0.34,
-  habitableZone: 0.26,
-  surfaceTemp: 0.18,
-  rocky: 0.12,
-  starStability: 0.10,
+  habitableZone: 0.34,
+  earthSimilarity: 0.28,
+  insolation: 0.20,
+  rocky: 0.10,
+  starStability: 0.08,
 } as const;
 
 export interface HabitabilityBreakdown {
@@ -278,20 +303,29 @@ export function habitability(p: {
   hzStatus: DerivedPlanet["hzStatus"];
   hzDistance: number | null;
   temp: number | null;
+  insol: number | null;
   cls: PlanetClass;
   spectralClass: string;
   radius: number | null;
 }): HabitabilityBreakdown {
   const esiValue = p.esi ?? 0;
 
+  // Position in the habitable zone dominates. A world parked just outside the
+  // inner edge is a genuine near-miss, not a 97/100 candidate, so the decay is
+  // on the absolute distance from the edge rather than a soft exponential.
   let hzValue = 0;
   if (p.hzStatus === "inside") hzValue = 1;
-  else if (p.hzDistance !== null && Number.isFinite(p.hzDistance)) hzValue = clamp(Math.exp(-p.hzDistance / 1.5), 0, 1);
+  else if (p.hzDistance !== null && Number.isFinite(p.hzDistance)) {
+    hzValue = clamp(1 / (1 + p.hzDistance * 1.6), 0, 1);
+  }
 
-  let tempValue = 0;
-  if (p.temp !== null) {
-    // 288 K is ideal; a 60 K tolerance costs roughly half the score.
-    tempValue = Math.exp(-Math.pow((p.temp - 288) / 90, 2));
+  // Insolation is the least model-dependent statement about surface conditions:
+  // Earth receives 1 S_earth. A runaway greenhouse begins well before 2.
+  let insolValue = 0;
+  if (p.insol !== null && p.insol > 0) {
+    insolValue = Math.exp(-Math.pow(Math.log10(p.insol) / 0.62, 2));
+    // Beyond the runaway threshold, water is lost regardless of the rest.
+    if (p.insol > 2.5) insolValue *= clamp(1 - (p.insol - 2.5) / 6, 0, 1);
   }
 
   let rockyValue = 0;
@@ -306,9 +340,9 @@ export function habitability(p: {
   const starValue = stableStars[p.spectralClass[0]] ?? 0.5;
 
   const parts = [
-    { key: "earthSimilarity" as const, weight: HABITABILITY_WEIGHTS.earthSimilarity, value: esiValue, label: "Earth similarity" },
     { key: "habitableZone" as const, weight: HABITABILITY_WEIGHTS.habitableZone, value: hzValue, label: "Habitable zone" },
-    { key: "surfaceTemp" as const, weight: HABITABILITY_WEIGHTS.surfaceTemp, value: tempValue, label: "Temperature" },
+    { key: "earthSimilarity" as const, weight: HABITABILITY_WEIGHTS.earthSimilarity, value: esiValue, label: "Earth similarity" },
+    { key: "insolation" as const, weight: HABITABILITY_WEIGHTS.insolation, value: insolValue, label: "Starlight received" },
     { key: "rocky" as const, weight: HABITABILITY_WEIGHTS.rocky, value: rockyValue, label: "Rocky body" },
     { key: "starStability" as const, weight: HABITABILITY_WEIGHTS.starStability, value: starValue, label: "Host star" },
   ];
@@ -375,18 +409,17 @@ export function derive(planet: Planet): DerivedPlanet {
     }
   }
 
+  const insol = insolation(planet, star.luminosity, axis.value);
   const esiResult = earthSimilarity({ radius, density, escape: escapeVelocity, temp });
   const cls = classify(radius, massEarth);
 
   const hab = habitability({
-    esi: esiResult.esi, hzStatus, hzDistance, temp, cls,
+    esi: esiResult.esi, hzStatus, hzDistance, temp, insol, cls,
     spectralClass: star.spectralClass, radius,
   });
 
-  // "Potentially habitable" uses the same conservative criteria as the
-  // archive's own habitable-worlds table: rocky AND inside the conservative HZ.
-  // Mirrors the archive's own "habitable worlds" criteria — a rocky-size world in
-  // the habitable zone — with one addition: when a mass has actually been
+  // Mirrors the archive's own "habitable worlds" criteria — a rocky-size world
+  // in the habitable zone — with one addition: when a mass has actually been
   // measured, a 1.5 R⊕ planet above ~10 M⊕ is far more likely a mini-Neptune, so
   // it does not qualify on radius alone.
   const potentiallyHabitable = hzStatus === "inside"
@@ -408,6 +441,7 @@ export function derive(planet: Planet): DerivedPlanet {
     semiMajorAxis: axis.value,
     semiMajorAxisInferred: axis.inferred,
     equilibriumTemp: temp,
+    insolation: insol,
     hzStatus,
     potentiallyHabitable,
     esi: esiResult.esi,
@@ -422,7 +456,7 @@ export function derive(planet: Planet): DerivedPlanet {
 export function habitabilityBreakdown(d: DerivedPlanet): HabitabilityBreakdown {
   return habitability({
     esi: d.esi, hzStatus: d.hzStatus, hzDistance: d.hzDistance,
-    temp: d.equilibriumTemp, cls: d.cls,
+    temp: d.equilibriumTemp, insol: d.insolation, cls: d.cls,
     spectralClass: d.star.spectralClass, radius: d.radiusEarth,
   });
 }

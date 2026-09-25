@@ -88,6 +88,8 @@ export interface DerivedPlanet {
   semiMajorAxis: number | null;
   semiMajorAxisInferred: boolean;
   equilibriumTemp: number | null;
+  /** Insolation in Earth fluxes — measured, or derived from luminosity and a. */
+  insolation: number | null;
   /** Where the planet sits relative to its star's habitable zone. */
   hzStatus: "inside" | "outside-inner" | "outside-outer" | "unknown";
   /** Only rocky worlds inside the conservative HZ qualify. */

@@ -42,7 +42,8 @@ No invented heuristics. Every derived number cites its source:
 - **Stellar luminosity** — catalogued value, else Stefan–Boltzmann from radius and temperature, else a main-sequence mass–luminosity relation. Flagged *est* when inferred.
 - **Earth Similarity Index** — Schulze-Makuch et al. (2011), as a weighted geometric mean over whichever of radius / density / escape velocity / temperature can actually be computed.
 - **Missing masses** — Chen & Kipping (2017) forecaster mass–radius relation, used *only* where a value is genuinely absent, and always rendered differently from measured data.
-- **Habitability index** — a transparent weighted composite (Earth similarity 34%, habitable zone 26%, temperature 18%, rocky 12%, host-star stability 10%), displayed with its full breakdown rather than as a bare number.
+- **Habitability index** — a transparent weighted composite (habitable-zone position 34%, Earth similarity 28%, insolation received 20%, rocky body 10%, host-star stability 8%), displayed with its full breakdown rather than as a bare number. Habitable-zone position dominates on purpose: a world parked just outside the inner edge is a near-miss, not a 97/100 candidate.
+- **Equilibrium temperatures** — the catalogued value where present, otherwise derived from insolation (T = 255 K · S^0.25) before falling back to the zero-albedo Stefan-Boltzmann form. That ordering matters: for TRAPPIST-1 e the naive formula returns ~3,700 K, which would rank a temperate world as molten, while the insolation route gives 228 K and an ESI of 0.987 — matching the published value of 0.99.
 
 ### The rendering is generated, not downloaded
 
