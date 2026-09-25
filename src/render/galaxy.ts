@@ -89,20 +89,60 @@ export function heliocentric(lDeg: number, bDeg: number, distancePc: number): TH
  *    visible. Everything beyond the horizon is clamped to the rim rather than
  *    deleted, which is why the far field reads as a shell.
  */
-export type Portal = "galactic" | "local";
+/**
+ * How distance in parsecs becomes distance in scene units.
+ *
+ *  - "spread"  piecewise: linear out to 200 pc, logarithmic beyond. The default.
+ *  - "nearby"  strictly linear out to NEARBY_HORIZON_PC, and nothing past it.
+ *  - "log"     fully logarithmic, the widest possible view.
+ *
+ * The previous "local" mode was linear out to 400 pc and CLAMPED everything
+ * beyond it to the rim. That was a real defect, not a subtlety: 2,935 of 6,238
+ * worlds with a measured distance — 47% — sit further than 400 pc, so nearly
+ * half the catalogue was stacked on one single scene radius and rendered as a
+ * hollow sphere. "spread" is strictly monotonic, so no two different distances
+ * ever resolve to the same position.
+ */
+export type ScaleMode = "spread" | "nearby" | "log";
 
-export const LOCAL_HORIZON_PC = 400;
+/** Radius, in parsecs, inside which the "nearby" mode is strictly linear. */
+export const NEARBY_HORIZON_PC = 200;
 
 /** Total radius of the mapped volume, in scene units. */
 export const SCENE_EXTENT = 74;
 
-export function distanceToScene(distancePc: number, portal: Portal): number {
-  if (portal === "local") {
-    return 1 + (clamp(distancePc, 0, LOCAL_HORIZON_PC) / LOCAL_HORIZON_PC) * SCENE_EXTENT;
+export function distanceToScene(distancePc: number, mode: ScaleMode): number {
+  if (mode === "log") {
+    const d = clamp(distancePc, 1.3, 12000);
+    const t = Math.log10(d / 1.3) / Math.log10(12000 / 1.3);
+    return 0.9 + t * SCENE_EXTENT;
   }
-  const d = clamp(distancePc, 1.3, 12000);
-  const t = Math.log10(d / 1.3) / Math.log10(12000 / 1.3);
-  return 0.9 + t * SCENE_EXTENT;
+
+  const d = Math.max(distancePc, 0);
+
+  if (mode === "nearby") {
+    return 1 + (clamp(d, 0, NEARBY_HORIZON_PC) / NEARBY_HORIZON_PC) * SCENE_EXTENT;
+  }
+
+  // "spread" uses asinh, which behaves linearly near zero and logarithmically
+  // far out, with a smooth derivative throughout — no kink to catch the eye at
+  // the transition, unlike a piecewise join.
+  //
+  // The softening length is tuned against the real catalogue rather than picked
+  // for elegance. With a = 100 pc the 6,238 worlds with a measured distance land
+  // at: p10 -> 6 pc, p25 -> 13, median 359 pc -> 28, p90 1338 pc -> 45, and the
+  // furthest at 8 kpc -> 70 of a 74-unit radius. That uses essentially the whole
+  // volume, keeps the dense near field spread out, and gives every distinct
+  // distance its own position.
+  const SOFTENING_PC = 100;
+  const t = Math.asinh(d / SOFTENING_PC) / Math.asinh(12000 / SOFTENING_PC);
+  return 1 + clamp(t, 0, 1) * SCENE_EXTENT;
+}
+
+/** Whether a world is inside the currently selected radius. */
+export function withinScale(distancePc: number | undefined, mode: ScaleMode): boolean {
+  if (mode !== "nearby") return true;
+  return typeof distancePc === "number" && distancePc > 0 && distancePc <= NEARBY_HORIZON_PC;
 }
 
 export class GalaxyView {
@@ -142,7 +182,9 @@ export class GalaxyView {
 
   private colorMode: ColorMode = "class";
   private sizeMode: SizeMode = "radius";
-  private portal: Portal = "local";
+  private scaleMode: ScaleMode = "spread";
+  /** The Milky Way plate and distance rings. Off by default: dots are the data. */
+  private galaxyVisible = false;
   /** When true the camera orbits the centre of the data instead of the Sun. */
   private centredOnData = false;
   private dataCentroid = new THREE.Vector3();
@@ -228,6 +270,7 @@ export class GalaxyView {
     this.structure = buildNearbyStars();
     this.scene.add(this.structure);
     this.rebuildRings();
+    this.setGalaxyVisible(this.galaxyVisible);
   }
 
   private rebuildRings(): void {
@@ -244,7 +287,7 @@ export class GalaxyView {
         }
       });
     }
-    this.rings = buildDistanceRings(this.portal, (pc) => distanceToScene(pc, this.portal));
+    this.rings = buildDistanceRings(this.scaleMode, (pc) => distanceToScene(pc, this.scaleMode));
     this.scene.add(this.rings);
   }
 
@@ -306,7 +349,7 @@ export class GalaxyView {
       const lon = p.planet.ra ?? 0;
       const lat = p.planet.dec ?? 0;
       const dist = p.planet.sy_dist ?? 100;
-      const pos = heliocentric(lon, lat, distanceToScene(dist, this.portal));
+      const pos = heliocentric(lon, lat, distanceToScene(dist, this.scaleMode));
       this.positions[i * 3] = pos.x;
       this.positions[i * 3 + 1] = pos.y;
       this.positions[i * 3 + 2] = pos.z;
@@ -314,7 +357,8 @@ export class GalaxyView {
 
       this.baseSizes[i] = this.sizeFor(p, { radiusExtent, massExtent, distExtent, yearExtent });
 
-      const visible = p.planet.disc_year <= this.yearFilter ? 1 : 0;
+      // Both the discovery-year reveal and the scale radius gate visibility.
+      const visible = p.planet.disc_year <= this.yearFilter && withinScale(p.planet.sy_dist, this.scaleMode) ? 1 : 0;
       this.visibility[i] = visible;
       this.targetVisibility[i] = visible;
     });
@@ -421,23 +465,52 @@ export class GalaxyView {
   }
 
   /** Switches the distance projection and re-lays-out every point. */
-  setPortal(portal: Portal): void {
-    if (this.portal === portal) return;
-    this.portal = portal;
+  setScaleMode(mode: ScaleMode): void {
+    if (this.scaleMode === mode) return;
+    this.scaleMode = mode;
     for (let i = 0; i < this.planets.length; i += 1) {
       const p = this.planets[i];
-      const pos = heliocentric(p.planet.ra ?? 0, p.planet.dec ?? 0, distanceToScene(p.planet.sy_dist ?? 100, this.portal));
+      const pos = heliocentric(p.planet.ra ?? 0, p.planet.dec ?? 0, distanceToScene(p.planet.sy_dist ?? 100, this.scaleMode));
       this.positions[i * 3] = pos.x;
       this.positions[i * 3 + 1] = pos.y;
       this.positions[i * 3 + 2] = pos.z;
       this.pickables[i].position.copy(pos);
     }
     (this.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    // Visibility is gated on the scale, so a mode change must re-evaluate it:
+    // "nearby" hides everything past its horizon rather than stacking it on the rim.
+    for (let i = 0; i < this.planets.length; i += 1) {
+      const p = this.planets[i];
+      const visible = p.planet.disc_year <= this.yearFilter && withinScale(p.planet.sy_dist, this.scaleMode) ? 1 : 0;
+      this.visibility[i] = visible;
+      this.targetVisibility[i] = visible;
+    }
+    (this.geometry.getAttribute("visibility") as THREE.BufferAttribute).needsUpdate = true;
     this.rebuildRings();
+    this.setGalaxyVisible(this.galaxyVisible);
     this.clearFocus();
   }
 
-  get portalValue(): Portal { return this.portal; }
+  get scaleModeValue(): ScaleMode { return this.scaleMode; }
+  get galaxyVisibleValue(): boolean { return this.galaxyVisible; }
+
+  /**
+   * Show or hide the Milky Way plate, the galactic core and the distance rings.
+   *
+   * Off by default. Every dot on this map is a confirmed planet, and the scenery
+   * is there to be consulted rather than to set the mood — several rounds of
+   * tuning made that clear, since every increase in the backdrop's presence came
+   * directly out of the data's legibility.
+   */
+  setGalaxyVisible(visible: boolean): void {
+    this.galaxyVisible = visible;
+    if (this.structure) this.structure.visible = visible;
+    if (this.rings) this.rings.visible = visible;
+    const plate = this.scene.getObjectByName("galactic-plane");
+    if (plate) plate.visible = visible;
+    const core = this.scene.getObjectByName("galactic-core");
+    if (core) core.visible = visible;
+  }
   get centredOnDataValue(): boolean { return this.centredOnData; }
 
   /**
@@ -529,7 +602,8 @@ export class GalaxyView {
     this.yearFilter = year;
     if (!this.geometry) return;
     for (let i = 0; i < this.planets.length; i += 1) {
-      this.targetVisibility[i] = this.planets[i].planet.disc_year <= year ? 1 : 0;
+      const p = this.planets[i];
+      this.targetVisibility[i] = p.planet.disc_year <= year && withinScale(p.planet.sy_dist, this.scaleMode) ? 1 : 0;
     }
   }
 
@@ -758,7 +832,7 @@ export class GalaxyView {
       radialStats: this.sampleExtent(),
       projection: this.projectionStats(),
       angular: this.angularStats(),
-      portal: this.portal,
+      scaleMode: this.scaleMode,
       ringsPresent: !!this.rings,
       structurePresent: !!this.structure,
       structureChildren: this.structure?.children.map((c) => c.name || c.type),

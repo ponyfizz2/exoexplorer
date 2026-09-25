@@ -12,7 +12,8 @@
  */
 
 import * as THREE from "three";
-import { makeLabel, radialTexture } from "./stars";
+import { makeLabel } from "./stars";
+import type { ScaleMode } from "./galaxy";
 
 const SUN_GALACTOCENTRIC_PC = 8150;
 
@@ -256,13 +257,15 @@ function buildGlowTexture(): THREE.CanvasTexture {
 }
 
 /** Faint concentric rings marking distance, with labels on two sides. */
-export function buildDistanceRings(portal: "local" | "galactic", toScene: (pc: number) => number): THREE.Group {
+export function buildDistanceRings(mode: ScaleMode, toScene: (pc: number) => number): THREE.Group {
   const group = new THREE.Group();
   group.name = "distance-rings";
 
-  const steps = portal === "local"
-    ? [10, 25, 50, 100, 200, 400]
-    : [10, 100, 1000, 10000];
+  const steps = mode === "nearby"
+    ? [10, 25, 50, 100, 200]
+    : mode === "log"
+      ? [10, 100, 1000, 10000]
+      : [10, 50, 100, 200, 500, 1000, 3000];
 
   for (const pc of steps) {
     const radius = toScene(pc);

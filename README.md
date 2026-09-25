@@ -115,11 +115,20 @@ Every individual point on the Galaxy Map is a **confirmed planet**. Nothing else
 
 - The **Milky Way** is a single translucent grey disc lying on the true galactic equator: four logarithmic spiral arms (two dominant, two weaker spurs) with dust lanes, a faint bulge at the centre, fading to nothing at the rim. Drawn as continuous soft strokes, never dots — an earlier revision scattered ~11,600 decorative star sprites across the map, which competed directly with the real data and made the picture unreadable.
 - **Brightness is calibrated, not eyeballed.** The plane's opacity is set so the open-sky background sits at 12.9/255 against a 9.2 baseline, while the exoplanet points hold at 75.6/255 — so not one of 6,372 worlds is dulled by the scenery behind it. An earlier attempt at 0.42 opacity tripled the background and the data stopped reading.
-- **Distance rings** at 10 / 25 / 50 / 100 / 200 / 400 pc are faint hairlines with labels.
+- **Distance rings** are faint hairlines with labels, shown only alongside the galaxy.
+- The **Milky Way is hidden by default** (View → Show). Every dot is a confirmed planet; the galaxy is scenery you switch on for reference.
 - The **Sun** is the origin, marked "Sol". It is the coordinate system, not a data point.
 - The **24 nearest real stars** (within 16 pc) are the one exception, and they are catalogued objects rather than decoration.
 
 The grey disc is **not measured data** — the archive provides position, not an image. It is drawn on the physically meaningful plane so you can see for yourself which worlds sit in the disk.
+
+### Distance scale, and a bug worth recording
+
+The map's first "local" mode was linear to 400 pc and **clamped everything beyond it to the rim**. 2,935 of 6,238 worlds with a measured distance — 47% — are further than 400 pc, so almost half the catalogue stacked on one single scene radius and rendered as a hollow sphere.
+
+That is fixed. Distance now maps through `asinh(d / 100 pc)`, which is near-linear close in and logarithmic far out with a smooth derivative, so there is no kink at the transition. Measured across the real catalogue: p10 → 6 pc, p25 → 13, median 359 pc → 28, p90 1338 pc → 45, and the furthest at 8 kpc → 70 of a 74-unit radius. Worlds within 0.5 units of the outermost radius went from **2,935 to 6**.
+
+Three modes are offered: **All distances** (the asinh map, default), **Within 200 pc** (strictly linear, with anything further hidden rather than stacked), and **Logarithmic** (widest view, at the cost of crowding the near field).
 
 ### Why the exoplanets are not all in the galactic plane
 

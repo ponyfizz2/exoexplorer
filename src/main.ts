@@ -17,7 +17,7 @@ import { loadFleet } from "./lib/client";
 import type { DerivedPlanet, Fleet, PlanetClass } from "./lib/types";
 import { clamp, escapeHtml, formatLightYears, formatMass, formatPeriod, formatRadius, formatTemp, int } from "./lib/utils";
 import { AXIS_PRESETS, axisSpec, createMethodDonut, createScatterChart, createTimeline, DEFAULT_COLOR_BY, type ChartHandle, type ColorMode } from "./render/charts";
-import { GalaxyView, methodColor, type SizeMode } from "./render/galaxy";
+import { GalaxyView, methodColor, type ScaleMode, type SizeMode } from "./render/galaxy";
 import { Starfield } from "./render/starfield";
 import { ICONS } from "./ui/icons";
 import {
@@ -400,10 +400,29 @@ function renderGalaxySidebar(): void {
   const activeYear = s.galaxyYear;
   const visibleCount = s.filtered.filter((d) => d.planet.disc_year <= activeYear).length;
 
-  const portal = galaxy?.portalValue ?? "local";
+  const scaleMode = galaxy?.scaleModeValue ?? "spread";
+  const galaxyVisible = galaxy?.galaxyVisibleValue ?? false;
   const centredOnData = galaxy?.centredOnDataValue ?? false;
 
   sidebar.innerHTML = `
+    <div class="side-section">
+      <h3><i class="h3-mark"></i> Show</h3>
+      <label class="switch" style="margin-bottom:8px">
+        <input type="checkbox" id="show-exoplanets" checked disabled />
+        <span class="switch-track"></span>
+        <span>6,366 exoplanets <span style="color:var(--text-faint)">(always on)</span></span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="show-galaxy" ${galaxyVisible ? "checked" : ""} />
+        <span class="switch-track"></span>
+        <span>Milky Way &amp; distance rings</span>
+      </label>
+      <p style="margin:7px 0 0;font-size:10px;line-height:1.5;color:var(--text-faint)">
+        Off by default. Every dot on this map is a confirmed planet; the galaxy is
+        scenery you can switch on for reference.
+      </p>
+    </div>
+
     <div class="side-section">
       <h3><i class="h3-mark"></i> Orbit around</h3>
       <div class="seg" style="width:100%" id="centre-mode">
@@ -417,15 +436,18 @@ function renderGalaxySidebar(): void {
     </div>
 
     <div class="side-section">
-      <h3><i class="h3-mark"></i> View scale</h3>
-      <div class="seg" style="width:100%" id="portal-mode">
-        <button type="button" data-portal="local" aria-pressed="${portal === "local"}" style="flex:1">Local bubble</button>
-        <button type="button" data-portal="galactic" aria-pressed="${portal === "galactic"}" style="flex:1">Whole galaxy</button>
+      <h3><i class="h3-mark"></i> Distance scale</h3>
+      <div class="seg" style="width:100%;flex-wrap:wrap" id="scale-mode">
+        <button type="button" data-scale="spread" aria-pressed="${scaleMode === "spread"}" style="flex:1">All distances</button>
+        <button type="button" data-scale="nearby" aria-pressed="${scaleMode === "nearby"}" style="flex:1">Within 200 pc</button>
+        <button type="button" data-scale="log" aria-pressed="${scaleMode === "log"}" style="flex:1">Logarithmic</button>
       </div>
       <p style="margin:7px 0 0;font-size:10px;line-height:1.5;color:var(--text-faint)">
-        ${portal === "local"
-          ? "Linear scale out to 400 pc — real structure in the Sun's neighbourhood."
-          : "Logarithmic scale out to 12 kpc — the whole surveyed galaxy in one frame."}
+        ${scaleMode === "spread"
+          ? "Linear nearby, logarithmic far out, to 8 kpc. Every measured distance gets its own position, so nothing piles into a shell."
+          : scaleMode === "nearby"
+            ? "Strictly linear to 200 pc. Anything further out is hidden rather than stacked on the rim."
+            : "Fully logarithmic: 1.3 pc and 8 kpc in one frame, at the cost of crowding the near field."}
       </p>
     </div>
 
@@ -514,9 +536,14 @@ function renderGalaxySidebar(): void {
     });
   });
 
-  sidebar.querySelectorAll<HTMLButtonElement>("#portal-mode button").forEach((button) => {
+  sidebar.querySelector<HTMLInputElement>("#show-galaxy")?.addEventListener("change", (event) => {
+    galaxy?.setGalaxyVisible((event.target as HTMLInputElement).checked);
+    renderGalaxyHud();
+  });
+
+  sidebar.querySelectorAll<HTMLButtonElement>("#scale-mode button").forEach((button) => {
     button.addEventListener("click", () => {
-      galaxy?.setPortal(button.dataset.portal as "local" | "galactic");
+      galaxy?.setScaleMode(button.dataset.scale as ScaleMode);
       renderGalaxySidebar();
       renderGalaxyHud();
     });
@@ -650,11 +677,13 @@ function renderGalaxyHud(): void {
       <div style="color:var(--cyan)">DRAG orbit · SCROLL zoom</div>
       <div style="color:var(--text-faint)">HOVER a world to probe it</div>
       <div style="color:var(--text-faint)">CLICK to open the dossier</div>
-      <div style="color:var(--text-faint);margin-top:4px">${(galaxy?.portalValue ?? "local") === "local"
-        ? "Linear scale · 400 pc horizon"
-        : "Log scale · 1 pc → 12 kpc"}</div>
+      <div style="color:var(--text-faint);margin-top:4px">${{
+        spread: "Near-linear → asinh to 8 kpc",
+        nearby: "Linear · nothing beyond 200 pc",
+        log: "Log scale · 1.3 pc → 8 kpc",
+      }[galaxy?.scaleModeValue ?? "spread"]}</div>
       <div style="color:var(--text-faint)">Centred on ${(galaxy?.centredOnDataValue ?? false) ? "the data" : "Sol (origin)"}</div>
-      <div style="color:var(--text-faint);margin-top:4px;opacity:.75">Grey haze = Milky Way, not data</div>
+      <div style="color:var(--text-faint);margin-top:4px;opacity:.75">${(galaxy?.galaxyVisibleValue ?? false) ? "Milky Way shown (scenery)" : "Milky Way hidden"}</div>
     </div>`;
 }
 
